@@ -259,7 +259,7 @@ HealthShare Setup
       HealthShare Modules:Core:12.02.2733 + Linkage Engine:12.01.2733
 
   (2) Fetch the SDK from:
-      http://github.com/to-be-determined/HSPanasonic.SDK_1.0.0.xml
+      https://raw.githubusercontent.com/jasonmimick/HSPanasonicSDK/master/HSPanasonic.SDK_0.0.1.xml
 
   (3) Load this into HS in the HSLIB namespace:
       HSLIB>do $system.OBJ.Load("<path>/HSPanasonic.SDK_1.0.0.xml,"ck")
