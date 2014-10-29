@@ -1,0 +1,2591 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25" zv="Cache for UNIX (Apple Mac OS X for x86-64) 2014.1 (Build 608U)" ts="2014-10-29 13:54:53">
+<Class name="HSPanasonic.AdminQueries">
+<Description>
+Provides a set of classmethods to run 
+administrative queries such as 
+How many /subjectSearch requests per day?
+How many /submitDocument request per day?
+Results are always returned as JSON arrays
+for consumption by webby clients</Description>
+<Super>%RegisteredObject</Super>
+<TimeChanged>63487,39553.70152</TimeChanged>
+<TimeCreated>63484,38230.002031</TimeCreated>
+
+<Method name="SubjectSearchesPerDay">
+<Description>
+Returns the number of subject searchs per day
+for a given ScanPoint namespace</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>ScanPointNS:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	return ..searchesPerDay(ScanPointNS,
+					      "HSPanasonic.ScanPoint.SearchSubjectRequest")
+]]></Implementation>
+</Method>
+
+<Method name="DocumentsSubmittedPerDay">
+<Description>
+Returns the number of subject searchs per day
+for a given ScanPoint namespace</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>ScanPointNS:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	return ..searchesPerDay(ScanPointNS,
+					      "HSPanasonic.ScanPoint.SubmitDocumentRequest")
+]]></Implementation>
+</Method>
+
+<Method name="searchesPerDay">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>ScanPointNS:%String,request</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	try {
+		new $namespace
+		set $namespace = ScanPointNS
+		set sql(1) = "select Count(*) as NumberOfMessages,TimeProcessed " 
+    	set sql(2) = "  from Ens.MessageHeader where "
+    	set sql(3) = " MessageBodyClassName = ? "
+    	//set sql(3) = " MessageBodyClassName = 'HSPanasonic.ScanPoint.SearchSubjectRequest'"
+		set sql(4) = " group by Day(TimeProcessed)"
+		set sql = 4
+		return ..SQLToJSON(.sql,request)
+	} catch error {
+		set po = ##class(%ZEN.proxyObject).%New()
+		set po.Status = "ERROR"
+		set po.Error = error.DisplayString()
+	    $$$THROWONERROR(sc,##class(Ens.Util.JSON).ObjectToJSONStream(po,.stream))
+		do stream.Rewind()
+		set json = ""
+		while ( 'stream.AtEnd ) { //'
+			set json = json _ stream.Read()
+		}
+		return json	
+	}
+]]></Implementation>
+</Method>
+
+<Method name="SQLToJSON">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[&sql:%String,params...:%String]]></FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	set stmt = ##class(%SQL.Statement).%New()
+	$$$THROWONERROR(sc,stmt.%Prepare(.sql))
+	set result = stmt.%Execute(params...)
+	// iterate over row, build proxy objects
+	set array = ##class(%ListOfObjects).%New()
+	set columns = stmt.%Metadata.columns
+	for i=1:1:columns.Count() {
+		set cols(i)=columns.GetAt(i).colName
+	}
+	set cols = i
+	while ( result.%Next() ) {
+		set po = ##class(%ZEN.proxyObject).%New()
+		for i=1:1:cols {
+			break
+			set colName = cols(i)
+			set $property(po, colName ) = result.%Get( colName )
+		}
+		//zw po
+		do array.Insert( po )
+	}
+	$$$THROWONERROR(sc,##class(Ens.Util.JSON).ObjectToJSONStream(array,.stream))
+	do stream.Rewind()
+	set json = ""
+	while ( 'stream.AtEnd ) { //'
+		set json = json _ stream.Read()
+	}
+	return json
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.OpenEMR.SearchSubjectOperation">
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>63482,76986.186718</TimeChanged>
+<TimeCreated>63482,33766.385188</TimeCreated>
+
+<Parameter name="ADAPTER">
+<Default>EnsLib.HTTP.OutboundAdapter</Default>
+</Parameter>
+
+<Property name="Adapter">
+<Type>EnsLib.HTTP.OutboundAdapter</Type>
+</Property>
+
+<Parameter name="INVOCATION">
+<Default>Queue</Default>
+</Parameter>
+
+<Method name="Test">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	try {
+	set request = ##class(HSPanasonic.ScanPoint.SearchSubjectRequest).%New()
+	do request.SearchFields.SetAt("John","FirstName")
+	do request.SearchFields.SetAt("Smith","LastName")
+	
+	set operation = ..%New("Testing")
+	set operation.Adapter.HTTPServer = "172.16.224.180"
+	set operation.Adapter.HTTPPort = 80
+	set operation.Adapter.URL = "/openemr/api"
+	$$$THROWONERROR(sc,##class(Ens.Config.Credentials).SetCredential("OpenEMRTest","healthshare","password",1) )	
+	set cred = ##class(Ens.Config.Credentials).%OpenId("OpenEMRTest")
+	set operation.Adapter.%CredentialsObj = cred
+	$$$THROWONERROR(sc,operation.OnMessage(request,.response))
+	for i=1:1:response.Results.Count() {
+		set item = response.Results.GetAt(i)
+		zw item
+	}
+
+	} catch (error) {
+		write error.DisplayString()
+	}
+]]></Implementation>
+</Method>
+
+<Parameter name="SearchFields">
+<Description>
+List the fields your search operation supports here
+a request for /searchSubjectMeta will return back the value here to
+the client</Description>
+<Default>LastName,FirstName,SSN</Default>
+</Parameter>
+
+<Method name="OnMessage">
+<FormalSpec>request:HSPanasonic.ScanPoint.SearchSubjectRequest,response:HSPanasonic.ScanPoint.SearchSubjectResponse</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	try {
+   	  if ('request.%Extends("HSPanasonic.ScanPoint.SearchSubjectRequest") ) 
+	  {
+		return $$$ERROR("Request not supported.")
+	  }
+	  //'  
+	  set response = ##class(HSPanasonic.ScanPoint.SearchSubjectResponse).%New()
+	  set response.Hostname = $system.INetInfo.LocalHostName()
+	  set response.SessionID = $Get($$$JobSessionId,"XXX") 	
+	  set response.Status = "OK"
+	  set ip = ..Adapter.HTTPServer
+      set user = ..Adapter.%CredentialsObj.Username
+	  set pass=..Adapter.%CredentialsObj.Password
+	  set ..Adapter.%CredentialsObj=""
+      set token = ##class(HSPanasonic.OpenEMR.XMLHTTPOperation).loginProviderAndGetToken(user,pass,ip)
+	  $$$TRACE("token=" _ token )
+      if ( $length( token ) < 10 ) {	// not a valid token
+		throw ##class(%Exception.General).%New("Invalid token received from OpenEMR token="_token)
+	  }
+
+      // First use the info in the request.Subject to search OpenEMR for
+	  // a patient ID to link this document against.
+	  set lname = request.SearchFields.GetAt("LastName")
+	  set fname = request.SearchFields.GetAt("FirstName")
+	  set ss = request.SearchFields.GetAt("SSN")
+	  set url = ..Adapter.URL
+	  // strip off any trailing forward-slash
+	  set:$extract(url,$length(url))="/" url=$extract(url,1,$length(url)-1)
+	  set url = url _ "/searchpatient.php"
+	  $$$TRACE("url="_url)
+	  set formVars = "token,lname,fname,ss"
+	  set sc=..Adapter.PostURL(url,.searchResponse,formVars,token,lname,fname,ss)
+	   // parse out the response
+	  set sr=""
+	  do searchResponse.Data.Rewind()
+	  while ( 'searchResponse.Data.AtEnd ) {
+		set sr = sr _ searchResponse.Data.Read()
+	  }		
+	  $$$TRACE("sr=" _ sr )
+	  set status = $piece($piece(sr,"</status>",1),"<status>",2)
+	  $$$TRACE("search status = " _ status)
+	  if ( status '= "0" ) {
+		$$$TRACE("OpenEMR search result = " _ sr)
+		throw ##class(%Exception.General).%New("OpenEMR search returned an error")
+	  }
+  	  $$$THROWONERROR(sc, ##class(%XML.TextReader).ParseString(sr,.textReader) )
+	  while ( textReader.Read() ) {
+		if ( textReader.NodeType = "element" ) {
+			if ( textReader.Name = "Patient" ) {
+				set readingPatient = 1
+		        set o=##class(%ArrayOfDataTypes).%New()
+				while ( readingPatient ) {
+					do textReader.Read()
+					if ( textReader.NodeType = "endelement" ) {
+						if ( textReader.Name = "Patient" ) {
+							set readingPatient = 0 
+							continue
+						}
+					}
+					if ( textReader.NodeType = "element" ) {
+					  set key = textReader.Name
+					  // we got something we care about,
+					  // advance and get it's value'
+					  do textReader.Read()
+					  set value = textReader.Value
+		    		  do o.SetAt(value,key)
+					}
+				}
+			}
+			if ( $isobject($get(o)) ) {
+				do response.Results.Insert(o)
+				kill o
+			}
+		}
+	}
+   	return $$$OK
+
+   } catch error {
+	  set response = ##class(HSPanasonic.ScanPoint.SearchSubjectResponse).%New()
+	  set response.Hostname = $system.INetInfo.LocalHostName()
+	  set response.SessionID = $Get($$$JobSessionId,"XXX")	
+	  set response.Status = "ERROR: " _ error.DisplayString()
+	  return error.AsStatus()
+   }
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.OpenEMR.SendDocumentToOpenEMR">
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>63482,58967.474988</TimeChanged>
+<TimeCreated>63481,41298.208339</TimeCreated>
+
+<Parameter name="ADAPTER">
+<Default>EnsLib.HTTP.OutboundAdapter</Default>
+</Parameter>
+
+<Property name="Adapter">
+<Type>EnsLib.HTTP.OutboundAdapter</Type>
+</Property>
+
+<Parameter name="INVOCATION">
+<Default>Queue</Default>
+</Parameter>
+
+<UDLText name="T">
+<Content><![CDATA[
+// Property OpenEMRBaseUrl As %String(MAXLEN = 1000);
+
+]]></Content>
+</UDLText>
+
+<Parameter name="SETTINGS">
+<Description>
+The base url for the OpenEMR xml api, for example,
+http://zanec.com/openemr/api/</Description>
+<Type>%String</Type>
+<Default>Credentials:Basic:credentialsSelector</Default>
+</Parameter>
+
+<Method name="Test">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	try {
+	set request = ##class(HSPanasonic.ScanPoint.SubmitDocumentRequest).%New()
+	//do request.Subject.SetAt("John","FirstName")
+	//do request.Subject.SetAt("Smith","LastName")
+	do request.Subject.SetAt(1,"pid")
+	set request.Type = "html"	
+	set doc = ##class(%Stream.GlobalBinary).%New()
+	do doc.WriteLine("<html><body>")
+	for i=1:1:10 {
+		do doc.WriteLine("<li>Hello Dude #" _ i _ "</li>")
+	}
+	do doc.WriteLine("</body></html>")
+	do doc.Rewind()
+	set request.Body = ##class(%Stream.GlobalBinary).%New()
+	while ( ' doc.AtEnd ) {
+		do request.Body.Write( $system.Encryption.Base64Encode(doc.Read()))
+	}
+	set request.Size = request.Body.Size
+	set request.Name = "TestDocument" _ $increment(^hspansonic.openemr.test)
+	
+	set operation = ..%New("Testing")
+	set operation.Adapter.HTTPServer = "172.16.224.180"
+	set operation.Adapter.HTTPPort = 80
+	set operation.Adapter.URL = "/openemr/api"
+	$$$THROWONERROR(sc, ##class(Ens.Config.Credentials).SetCredential("OpenEMRTest","healthshare","password",1) )	
+	set cred = ##class(Ens.Config.Credentials).%OpenId("OpenEMRTest")
+	set operation.Adapter.%CredentialsObj = cred
+	set sc=operation.AddDocument(request,.response)
+	do $system.OBJ.DisplayError( sc )
+
+	} catch (error) {
+
+		write error.DisplayString()
+
+	}
+]]></Implementation>
+</Method>
+
+<Method name="AddDocument">
+<Description>
+pRequest.StringValue =mpiid_"~"_p("link")_"~"_p("externalId")_"~"_p("encounter")</Description>
+<FormalSpec>request:HSPanasonic.ScanPoint.SubmitDocumentRequest,*response:HSPanasonic.ScanPoint.SubmitDocumentResponse</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	#dim error as %Exception.AbstractException
+	set sc=$$$OK
+	set response = ##class(HSPanasonic.ScanPoint.SubmitDocumentResponse).%New()
+	set response.Hostname = $system.INetInfo.LocalHostName()
+	set response.SessionID = $Get($$$JobSessionId,"XXX") 	
+	set response.Status = "OK"
+	try {
+		
+		set ^EnsLib.HTTP.Test=0
+		set user = ..Adapter.%CredentialsObj.Username,pass=..Adapter.%CredentialsObj.Password
+		set ..Adapter.%CredentialsObj=""
+		$$$TRACE("user="_user_" pass="_pass)
+		//$$$TRACE("Link="_link)
+	    set ip = ..Adapter.HTTPServer
+		set token = ##class(HSPanasonic.OpenEMR.XMLHTTPOperation).loginProviderAndGetToken(user,pass,ip)
+		$$$TRACE("token=" _ token )
+	    if ( $length( token ) < 10 ) {	// not a valid token
+			throw ##class(%Exception.General).%New("Invalid token received from OpenEMR token="_token)
+		}
+		/*
+		// First use the info in the request.Subject to search OpenEMR for
+		// a patient ID to link this document against.
+		set lastname = request.Subject.GetAt("LastName")
+		set firstname = request.Subject.GetAt("FirstName")
+		set url = ..Adapter.URL_"/searchpatient.php"
+		$$$TRACE("url="_url)
+		set formValues("token")=token
+		set formValues("lastname")=lastname
+		set formValues("firstname")=firstname
+		set formVars = "token,lastname,firstname"
+		set sc=..Adapter.PostURL(url,.searchResponse,formVars,token,lastname,firstname)
+	    // parse out the response
+		set sr=""
+		do searchResponse.Data.Rewind()
+		while ( 'searchResponse.Data.AtEnd ) {
+			set sr = sr _ searchResponse.Data.Read()
+		}		
+		$$$TRACE("sr=" _ sr )
+		set status = $piece($piece(sr,"</status>",1),"<status>",2)
+		$$$TRACE("search status = " _ status)
+		if ( status '= "0" ) {
+			$$$TRACE("OpenEMR search result = " _ sr)
+			throw ##class(%Exception.General).%New("OpenEMR search returned an error")
+		}
+		set patientId = ..parseSearchResponse( sr ) 
+		*/
+		set patientId = request.Subject.GetAt("pid")
+		$$$TRACE("Sending document with patientId = " _ patientId)
+		if ( patientId = 0 ) {
+			throw ##class(%Exception.GeneralException).%New("Unable to find patient in OpenEMR")
+		}
+		kill formVars,formValues
+		//set url = ..OpenEMRBaseUrl_"addpatientdocument.php?"
+		set url = ..Adapter.URL _ "/addpatientdocument.php"
+		// docDate,listId,categoryId,data,docType,mimeType
+		set formVars = "patientId,docName,data,docType,mimeType,listId,categoryId,token"
+		// Base64Encode the request.Body
+		set b64=##class(%Stream.GlobalBinary).%New()
+		do request.Body.Rewind()
+		/*
+		while ( ' request.Body.AtEnd ) {
+			do b64.Write( $system.Encryption.Base64Encode( request.Body.Read() ) )
+		}
+		do b64.Rewind()
+		do request.Body.Rewind()
+		set streamToPost = b64
+		if ( b64.Read(100) = request.Body.Read(100) ) {	// it's already b64!
+			set streamToPost = request.Body
+		}
+		*/
+		//set sc=..Adapter.PostURL(url,.addDocumentResponse,formVars,patientId,request.Name
+		//						  ,streamToPost,request.Type,"application/"_request.Type,1,4,token)
+		set sc=..Adapter.PostURL(url,.addDocumentResponse,formVars,patientId,request.Name
+								  ,request.Body,request.Type,"application/"_request.Type,1,4,token)
+	    // parse out the response
+		set sr=""
+		do addDocumentResponse.Data.Rewind()
+		while ( 'addDocumentResponse.Data.AtEnd ) {
+			set sr = sr _ addDocumentResponse.Data.Read()
+		}		
+		set status = $piece($piece(sr,"</status>",1),"<status>",2)
+		$$$TRACE("add document status = " _ status)
+	} catch (error) {
+		do error.Log()
+		set sc=error.AsStatus()
+		set response = ##class(HSPanasonic.ScanPoint.SubmitDocumentResponse).%New()
+	    set response.Hostname = $system.INetInfo.LocalHostName()
+	    set response.SessionID = $Get($$$JobSessionId,"XXX")	
+	    set response.Status = "ERROR: " _ error.DisplayString()
+    }
+	Quit sc
+]]></Implementation>
+</Method>
+
+<Method name="parseSearchResponse">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>xml:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	$$$THROWONERROR(sc, ##class(%XML.TextReader).ParseString(xml,.textReader) )
+	while ( textReader.Read() ) {
+		if ( textReader.NodeType = "element" ) {
+			if ( textReader.Name = "pid" ) {
+				do textReader.Read()
+				set pids = $listbuild( textReader.Value )
+			}
+		}
+	}
+	if ( '$listvalid(pids) ) {
+		$$$TRACE("No results found!")
+		return 0
+	}
+	if ( $listlength(pids) > 1 ) {
+		$$$TRACE("Found multiple results for patient search!")
+	}
+
+	return $list(pids,1)
+]]></Implementation>
+</Method>
+
+<XData name="MessageMap">
+<Data><![CDATA[
+<MapItems>
+	<MapItem MessageType="HSPanasonic.ScanPoint.SubmitDocumentRequest"> 
+		<Method>AddDocument</Method>
+	</MapItem>
+</MapItems>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="HSPanasonic.OpenEMR.XMLHTTPOperation">
+<Description>
+Given a url, fetch the xml document at that url and return an EnsLib.EDI.XML.Document
+bound to some vdoc XML schema - like the inbound File Service but "on demand"</Description>
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>63481,53897.569909</TimeChanged>
+<TimeCreated>63480,39744.550491</TimeCreated>
+
+<Parameter name="ADAPTER">
+<Default>EnsLib.HTTP.OutboundAdapter</Default>
+</Parameter>
+
+<Property name="Adapter">
+<Type>EnsLib.HTTP.OutboundAdapter</Type>
+</Property>
+
+<Parameter name="INVOCATION">
+<Default>Queue</Default>
+</Parameter>
+
+<Property name="DocSchemaCategory">
+<Description><![CDATA[
+Category to apply to incoming XML document root node names to produce a complete DocType specification.<p/>
+Combines with the document type name to produce a DocType assignment.
+This setting may also contain multiple comma-separated type names followed by = and then a
+DocTypeCategory or full DocType value to apply to documents declared as that type.<br>
+A trailing asterisk (*) at the end of a given partial type Name will match any types with that beginning part.<p/>
+An example: DocSchemaCategory='Qv3NL,QURX_IN990001NL=QURX_IN990001NL'; <br>
+Note that a DocType assignment is be needed for Transformation, Validation or SearchTableClass indexing.]]></Description>
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="1000"/>
+</Property>
+
+<Parameter name="SETTINGS">
+<Default>DocSchemaCategory:Basic:selector?context={Ens.ContextSearch/SchemaCategories?host=EnsLib.EDI.XML.Service.Standard}</Default>
+</Parameter>
+
+<Method name="fetchToken">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>ip:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	//set loginURL="http://166.78.61.206/welvuoemr/openemr/api/login.php?username=admin&password=poiu7890"
+	set loginURL="http://"_ip_"/openemr/api/login.php?username=admin&password=pass"
+	set req=##class(%Net.HttpRequest).%New()
+	do ##class(%Net.URLParser).Parse(loginURL,.url)
+	set req.Server=url("host")
+	set req.Port=80 //url("port")
+	
+	$$$TRACE("url(""path"")="_url("path"))
+	set sc=req.Get(url("path")_"?username=admin&password=poiu7890")
+	set xresp=req.HttpResponse.Data.Read()
+	$$$TRACE(xresp)
+	set token=$p($p(xresp,"<token>",2),"</token>",1)
+	$$$TRACE("token="_token)
+	return token
+]]></Implementation>
+</Method>
+
+<Method name="loginProviderAndGetToken">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>user,pass,ip</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	//set loginURL="http://166.78.61.206/welvuoemr/openemr/api/login.php?username=admin&password=poiu7890"
+	set loginURL="http://"_ip_"/openemr/api/login.php?username=admin&password=pass"
+	set req=##class(%Net.HttpRequest).%New()
+	do ##class(%Net.URLParser).Parse(loginURL,.url)
+	set req.Server=url("host")
+	set req.Port=80 //url("port")
+	$$$TRACE("url(""path"")="_url("path"))
+	$$$TRACE(url("path")_"?username="_user_"&password="_pass)
+	set sc=req.Get(url("path")_"?username="_user_"&password="_pass)
+	set xresp=req.HttpResponse.Data.Read()
+	$$$TRACE(xresp)
+	set token=$p($p(xresp,"<token>",2),"</token>",1)
+	$$$TRACE("token="_token)
+	return token
+]]></Implementation>
+</Method>
+
+<Method name="OnMessage">
+<FormalSpec>request:Ens.StringRequest,*response:EnsLib.EDI.XML.Document</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	#dim error as %Exception.AbstractException
+
+	set sc=$$$OK
+	try {
+		
+		$$$TRACE("url="_request.StringValue)
+		set token=..fetchToken()
+		set tokenURL=request.StringValue_"&token="_token
+		$$$TRACE("tokenURL="_tokenURL)
+		do ##class(%Net.URLParser).Parse(tokenURL,.url)
+		set ..Adapter.HTTPPort=$select($g(url("port"))'="":url("port"),1:80)
+		set ..Adapter.HTTPServer=url("host")
+		set sc=..Adapter.GetURL(url("path")_"?"_url("query")_"&token="_token,.httpResponse)
+		$$$TRACE(sc)
+		set stream=httpResponse.Data
+		$$$TRACE("Got response size="_stream.Size)
+		do stream.Rewind()
+		set response=##class(EnsLib.EDI.XML.Document).ImportFromLibraryStream(stream,.sc)
+		if $$$ISERR(sc) throw sc
+		$$$TRACE("DocSchemaCategory="_..DocSchemaCategory)
+		set response.DocType=..DocSchemaCategory
+		
+	} catch error {
+		do error.Log()
+		$$$TRACE(error.DisplayString())
+	}
+	Quit sc
+]]></Implementation>
+</Method>
+
+<XData name="MessageMap">
+<Data><![CDATA[
+<MapItems>
+	<MapItem MessageType="Ens.StringRequest"> 
+		<Method>OnMessage</Method>
+	</MapItem>
+</MapItems>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="HSPanasonic.SampleDocViewer.ScannedDocument">
+<Super>%CSP.Page</Super>
+<TimeChanged>63461,55171.828546</TimeChanged>
+<TimeCreated>63461,55171.828546</TimeCreated>
+
+<Method name="OnPage">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	&html<
+	<!DOCTYPE html>
+	<html>
+	<head>
+	</head>
+	<body>
+	>
+	set sql="select * from HSPanasonic_ScanPoint.SubmitDocumentRequest"
+	set stmt=##class(%SQL.Statement).%New()
+	set sc=stmt.%Prepare(sql)
+	set result = stmt.%Execute()
+	do result.%Display()
+	&html<
+	</body>
+	
+	</html>
+
+	>
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.SampleDocViewer.Viewer">
+<Super>%CSP.Page</Super>
+<TimeChanged>63474,33254.401986</TimeChanged>
+<TimeCreated>63461,55186.019487</TimeCreated>
+
+<Method name="OnPage">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	&html<
+	<!DOCTYPE html>
+	<html>
+	<head>
+	</head>
+	<body>
+	>
+	set sql="select * from HSPanasonic_ScanPoint.SubmitDocumentRequest"
+	set stmt=##class(%SQL.Statement).%New()
+	set sc=stmt.%Prepare(sql)
+	set result = stmt.%Execute()
+	&html<
+
+	<h2> Scanned Documents Sample Viewer </h2>
+
+	<table>
+		<tr>
+			<th>Subject</th>
+			<th>Document Name</th>
+			<th>Type</th>
+			<th>Uploaded By</th>
+		</tr>
+	>
+	while ( result.%Next(.sc) ) {
+		quit:$$$ISERR(sc)
+		set subject=result.%Get("Subject")
+	    /*
+		set key=subject.Next(""),s=""
+		while ( key'="" ) {
+			set s=s_key_"="_subject.GetAt(key)_"|"
+			set key=subject.Next(key)
+		}
+		*/	
+		&html<
+		<tr>
+			<td>#(subject)#
+			</td>
+			<td>#(result.%Get("Name"))#</td>
+			<td>#(result.%Get("Type"))#</td>
+			<td>#(result.%Get("User"))#</td>
+		</tr>
+		>	
+	}	
+	&html<
+	</table>
+	</body>
+	
+	</html>
+
+	>
+	quit $$$OK
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.EndpointOperation">
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>63482,57273.85098</TimeChanged>
+<TimeCreated>63460,28270.237406</TimeCreated>
+
+<Property name="ScanRegistryURL">
+<Type>%String</Type>
+<InitialExpression>"localhost:20187"</InitialExpression>
+<Parameter name="MAXLEN" value="10000"/>
+</Property>
+
+<Property name="SearchSubjectTarget">
+<Type>Ens.DataType.ConfigName</Type>
+</Property>
+
+<Property name="SubmitDocumentTarget">
+<Type>Ens.DataType.ConfigName</Type>
+</Property>
+
+<Parameter name="SETTINGS">
+<Default><![CDATA[ScanRegistryURL:HSPanasonic,SearchSubjectTarget:HSPanasonic:selector?multiSelect=0&context={Ens.ContextSearch/ProductionItems?targets=1&productionName=@productionId},SubmitDocumentTarget:HSPanasonic:selector?multiSelect=0&context={Ens.ContextSearch/ProductionItems?targets=1&productionName=@productionId}]]></Default>
+</Parameter>
+
+<Method name="CreateResponse">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[ResponseCode:%String,&Headers="",Content:%String=""]]></FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+  set stream = ##class(%GlobalCharacterStream).%New()
+  set stream.Attributes("ResponseCode")=ResponseCode
+  if ( $data(Headers) ) {
+    set header=$order(Headers(""))
+    while ( header'="" ) {
+      set stream.Attributes(header)=Headers(header) 
+      set header=$order(Headers(header))
+    }
+  }
+  if ( ""'=Content ) {
+    do stream.Write(Content)
+  }
+  return ##class(EnsLib.HTTP.GenericMessage).%New(stream,,stream)
+]]></Implementation>
+</Method>
+
+<Parameter name="HeaderApiKey">
+<Type>%String</Type>
+<Default>x-healthshare-apikey</Default>
+</Parameter>
+
+<Parameter name="ValidateApiUrl">
+<Type>%String</Type>
+<Default>/validateApi</Default>
+</Parameter>
+
+<Method name="HandleValidateApiRequest">
+<FormalSpec>request:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+	// create another HTTP request and send to 
+	// ScanRegistryURL to validate the api-key
+	set stream=##class(%GlobalCharacterStream).%New()
+	set validateRequest=##class(EnsLib.HTTP.GenericMessage).%New(stream,,stream)
+    do validateRequest.HTTPHeaders.SetAt(..ScanRegistryURL,"host")
+	do validateRequest.HTTPHeaders.SetAt("GET","HttpRequest")
+	do validateRequest.HTTPHeaders.SetAt(..#ValidateApiUrl,"URL")
+	do validateRequest.HTTPHeaders.SetAt(0,"content-length")
+	set apikey=request.HTTPHeaders.GetAt(..#HeaderApiKey)
+	do validateRequest.HTTPHeaders.SetAt(apikey,..#HeaderApiKey)
+	set vop=##class(EnsLib.HTTP.GenericOperation).%New("ValidateApiOp")
+	$$$THROWONERROR(sc,vop.OnInit())
+	set vop.Adapter.HTTPServer="localhost"	// TO - parameters
+	set vop.Adapter.HTTPPort = "20187"
+
+	$$$THROWONERROR(sc,vop.OnMessage(validateRequest,.validateResponse))
+	$$$TRACE("validateResponse.HTTPHeaders.GetAt(""StatusLine"")="_validateResponse.HTTPHeaders.GetAt("StatusLine"))
+	return validateResponse
+]]></Implementation>
+</Method>
+
+<Method name="OnMessage">
+<FormalSpec>request:EnsLib.HTTP.GenericMessage,response:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+  try {
+    set method=request.HTTPHeaders.GetAt("HttpRequest")
+	set url = request.HTTPHeaders.GetAt("URL")
+	set validateResponse=..HandleValidateApiRequest(request)
+	if ( validateResponse.HTTPHeaders.GetAt("StatusLine")'["200 OK" ) 
+	{
+	  set response=validateResponse
+	  return $$$OK
+    }
+	// else ok
+	// todo - log IO here!
+	$$$TRACE("validateResponse was ok")
+	// otherwise, must be a post!
+    if ( method'="POST" ) {
+      set response=..CreateResponse("405 Method Not Allowed")
+	  return $$$OK
+    }
+
+	set validUrls = $listbuild("/subjectSearch","/meta/subjectSearch""/submitDocument")
+	if ( '$listfind(validUrls,url) ) {
+		set response=..CreateResponse("404 Not Found")
+	} 
+	if ( url = "/subjectSearch" ) {
+		set response = ..HandleSearchSubject(request)
+	}
+	if ( url = "/meta/subjectSearch" ) {
+		set response = ..HandleMetaSearchSubject(request)
+	}
+	if ( url = "/submitDocument" ) {
+		set response = ..HandleSubmitDocument(request)
+	}
+
+    return $$$OK
+  } catch error {
+      set msg=error.DisplayString()
+      set response=..CreateResponse("500 Internal Server Error",,msg)
+      return $$$OK
+  }
+]]></Implementation>
+</Method>
+
+<UDLText name="T">
+<Content><![CDATA[
+// method jsonFromObject(object As %XML.Adaptor) As %String
+
+]]></Content>
+</UDLText>
+
+<Method name="jsonFromObject">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>object:%RegisteredObject</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	//set sc=object.XMLExportToString(.xml)
+	//return xml
+	set stream=##class(%Stream.TmpCharacter).%New()
+	set sc=##class(%ZEN.Auxiliary.jsonProvider).%WriteJSONStreamFromObject(stream,.object)
+	if ( $$$ISERR( sc ) ) 
+	{
+		throw ##class(%Exception.StatusException).CreateFromStatus(sc)	
+	}
+	do stream.Rewind()
+	set json=""
+	while ( 'stream.AtEnd ) { set json=json_stream.Read() }
+	return json
+]]></Implementation>
+</Method>
+
+<Method name="proxyFromHTTPRequestBody">
+<Internal>1</Internal>
+<FormalSpec>request:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>%ZEN.proxyObject</ReturnType>
+<Implementation><![CDATA[
+	set j=""
+	do request.Stream.Rewind()
+	while ( 'request.Stream.AtEnd ) { set j=j_request.Stream.Read() }
+	$$$THROWONERROR(sc,##class(%ZEN.Auxiliary.jsonProvider).%ConvertJSONToObject(j,,.obj))
+	return obj
+]]></Implementation>
+</Method>
+
+<Method name="HandleSearchSubject">
+<Internal>1</Internal>
+<FormalSpec>request:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+	set ssr = ##class(HSPanasonic.ScanPoint.SearchSubjectRequest).%New()
+	set obj = ..proxyFromHTTPRequestBody( request )	
+	do obj.%CopyToArray(.aobj)	
+	set key=$order( aobj("") )
+	while ( key '= "" ) {
+		set value = aobj(key)
+		do ssr.SearchFields.SetAt( value, key )
+		set key=$order( aobj(key) )
+	}
+	$$$THROWONERROR(sc,..SendRequestSync(..SearchSubjectTarget, ssr, .ssresponse ) )
+	return ..handleResponse( ssresponse )
+]]></Implementation>
+</Method>
+
+<Method name="HandleMetaSearchSubject">
+<Internal>1</Internal>
+<FormalSpec>request:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+	set searchOp = ..SearchSubjectTarget 
+	// we need to use the "name" of the SearchSubjectTarget to lookup that actual
+	// classname - they might be different
+	set stmt = ##class(%SQL.Statement).%New()
+	set sc=stmt.%Prepare( "select ID from Ens_Config.Item where Name = ? ")
+	set result = stmt.%Execute( ..SearchSubjectTarget )
+	set i=result.%Next(.sc)
+	set searchSubjectItem= ##class(Ens.Config.Item).%OpenId( result.%Get("ID") )
+	set clsDef = ##class(%Dictionary.ClassDefinition).%OpenId(searchSubjectItem.ClassName)
+	set fields = "?"
+	for i=1:1:clsDef.Parameters.Count() {
+		set param = clsDef.Parameters.GetAt(i)
+		if ( param.Name = "SearchFields" ) {
+			set fields = param.Default
+		}
+	}
+	set settings("x-healthshare-searchfields")=fields
+	return ..CreateResponse("200 OK",.settings,"")
+]]></Implementation>
+</Method>
+
+<Method name="handleResponse">
+<Internal>1</Internal>
+<FormalSpec>object:%RegisteredObject</FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+
+	set json=..jsonFromObject( object )
+	set status = "200 OK" 
+	if ( object.%Extends("%ListOfObjects") )
+	{
+		for i=1:1:object.Count() {
+			/*
+			set oo = object.GetAt(i)
+			
+			if (object.GetAt(i).Status '= "OK" )
+			{
+				set status="500 Internal Server Error"
+			}
+			*/
+		}
+	} else {
+		if ( object.Status '= "OK" ) {
+			set status="500 Internal Server Error"
+		}
+	}
+	set headers("content-type")="application/json"
+	set headers("content-length")=$length(json)
+	return ..CreateResponse(status,.headers,json)
+]]></Implementation>
+</Method>
+
+<Method name="HandleSubmitDocument">
+<FormalSpec>request:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+	set sdr = ##class(HSPanasonic.ScanPoint.SubmitDocumentRequest).CreateFromJSONStream(request.Stream)
+	set responses = ##class(%ListOfObjects).%New() 
+	for i=1:1:$length(..SubmitDocumentTarget,",") {
+		set target = $piece(..SubmitDocumentTarget,",",i)
+		$$$THROWONERROR(sc,..SendRequestSync(target, sdr, .ssresponse ) )
+		$$$TRACE("Sent to " _ target _ " response = " _ ssresponse)
+		if ( $isobject(ssresponse) ) {
+			do responses.Insert(ssresponse)
+		}
+	}
+	//return ..handleResponse( ssresponse )
+	return ..handleResponse( responses )
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.HL7RouterRoutingRule">
+<Description>
+</Description>
+<Super>Ens.Rule.Definition</Super>
+<TimeChanged>63461,34900.208783</TimeChanged>
+<TimeCreated>63461,32629.750086</TimeCreated>
+
+<Parameter name="RuleAssistClass">
+<Default>EnsLib.MsgRouter.RuleAssist</Default>
+</Parameter>
+
+<XData name="RuleDefinition">
+<XMLNamespace>http://www.intersystems.com/rule</XMLNamespace>
+<Data><![CDATA[
+<ruleDefinition alias="" context="EnsLib.MsgRouter.RoutingEngine" production="HSPanasonic.ScanPoint.Production">
+<ruleSet name="" effectiveBegin="" effectiveEnd="">
+<rule name="" disabled="false">
+</rule>
+<send transform="HSPanasonic.ScanPoint.SubmitDocumentRequestToHL7" target="HL7FileOutput"></send>
+</ruleSet>
+</ruleDefinition>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.Production">
+<Super>Ens.Production</Super>
+<TimeChanged>63489,39852.318956</TimeChanged>
+<TimeCreated>63459,81439.401318</TimeCreated>
+
+<XData name="ProductionDefinition">
+<Data><![CDATA[
+<Production Name="HSPanasonic.ScanPoint.Production" LogGeneralTraceEvents="false">
+  <Description></Description>
+  <ActorPoolSize>2</ActorPoolSize>
+  <Item Name="EndpointService" Category="" ClassName="EnsLib.HTTP.GenericService" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
+    <Setting Target="Host" Name="TargetConfigName">EndpointOperation</Setting>
+    <Setting Target="Adapter" Name="Port">8765</Setting>
+  </Item>
+  <Item Name="EndpointOperation" Category="" ClassName="HSPanasonic.ScanPoint.EndpointOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
+    <Setting Target="Host" Name="SearchSubjectTarget">HSPanasonic.ScanPoint.SearchSubjectSampleOperation</Setting>
+    <Setting Target="Host" Name="SubmitDocumentTarget">HSPanasonic.ScanPoint.SubmitDocumentFileOperation</Setting>
+  </Item>
+<Item Name="HSPanasonic.ScanPoint.SearchSubjectSampleOperation" Category="" ClassName="HSPanasonic.ScanPoint.SearchSubjectSampleOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="true" Schedule="">
+  </Item>
+  <Item Name="HSPanasonic.ScanPoint.SubmitDocumentFileOperation" Category="" ClassName="HSPanasonic.ScanPoint.SubmitDocumentFileOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="true" Schedule="">
+  </Item>
+</Production>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SearchSubjectRequest">
+<Super>Ens.Request</Super>
+<TimeChanged>63460,54832.800893</TimeChanged>
+<TimeCreated>63460,45385.149262</TimeCreated>
+
+<Property name="SearchFields">
+<Type>%ArrayOfDataTypes</Type>
+</Property>
+
+<Method name="%OnNew">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	set ..SearchFields = ##class(%ArrayOfDataTypes).%New()
+	return $$$OK
+]]></Implementation>
+</Method>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DefaultData>SearchSubjectRequestDefaultData</DefaultData>
+<Data name="SearchSubjectRequestDefaultData">
+<Structure>listnode</Structure>
+<Subscript>"SearchSubjectRequest"</Subscript>
+<Value name="1">
+<Value>SearchFields</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SearchSubjectResponse">
+<Super>Ens.Response</Super>
+<TimeChanged>63460,62939.595246</TimeChanged>
+<TimeCreated>63460,49532.959548</TimeCreated>
+
+<Property name="Hostname">
+<Type>%String</Type>
+</Property>
+
+<Property name="SessionID">
+<Type>%String</Type>
+</Property>
+
+<Property name="Status">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="10000"/>
+</Property>
+
+<Property name="Results">
+<Type>%ArrayOfDataTypes</Type>
+<Collection>list</Collection>
+</Property>
+
+<Method name="%OnNew">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	//set ..Results = ##class(%Collection.ListOfObj).%New()
+	quit $$$OK
+]]></Implementation>
+</Method>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DefaultData>SearchSubjectResponseDefaultData</DefaultData>
+<Data name="SearchSubjectResponseDefaultData">
+<Structure>listnode</Structure>
+<Subscript>"SearchSubjectResponse"</Subscript>
+<Value name="1">
+<Value>Hostname</Value>
+</Value>
+<Value name="2">
+<Value>SessionID</Value>
+</Value>
+<Value name="3">
+<Value>Status</Value>
+</Value>
+<Value name="4">
+<Value>Results</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SearchSubjectSampleOperation">
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>63476,31131.67021</TimeChanged>
+<TimeCreated>63460,52550.6658</TimeCreated>
+
+<Parameter name="SearchFields">
+<Description>
+List the fields your search operation supports here
+a request for /searchSubjectMeta will return back the value here to
+the client</Description>
+<Default>LastName,FirstName,SSN</Default>
+</Parameter>
+
+<Method name="OnMessage">
+<FormalSpec>request:HSPanasonic.ScanPoint.SearchSubjectRequest,response:HSPanasonic.ScanPoint.SearchSubjectResponse</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	set currNS = $namespace
+	try {
+   	  if ('request.%Extends("HSPanasonic.ScanPoint.SearchSubjectRequest") ) 
+	  {
+		return $$$ERROR("Request not supported.")
+	  }
+	  
+	  set response = ##class(HSPanasonic.ScanPoint.SearchSubjectResponse).%New()
+	  set response.Hostname = $system.INetInfo.LocalHostName()
+	  set response.SessionID = $Get($$$JobSessionId,"XXX") 	
+	  // TODO - use the search request parameters in SQL
+	  new $namespace
+	  set $namespace = "SAMPLES"
+	  set name = "%"_request.SearchFields.GetAt("LastName")
+	  set name=name_"%,%"_request.SearchFields.GetAt("FirstName")_"%"
+	  set sql="select ID from Sample.Person where Name Like ?"
+	  set rs=##class(%ResultSet).%New()
+	  $$$THROWONERROR(sc, rs.Prepare(sql) )
+	  $$$THROWONERROR(sc, rs.Execute(name) )
+	  while ( rs.Next() ) {
+		set person = ##class(Sample.Person).%OpenId(rs.Data("ID"))
+		set o=##class(%ArrayOfDataTypes).%New()
+	    do o.SetAt($piece(person.Name,",",1),"LastName")
+	    do o.SetAt($piece(person.Name,",",2),"FirstName")
+		do o.SetAt(person.SSN,"SSN")
+		do response.Results.Insert( o )	
+	  }
+	  set $namespace=currNS
+      set response.Status = "OK"
+   } catch error {
+	  set $namespace=currNS
+	  set response = ##class(HSPanasonic.ScanPoint.SearchSubjectResponse).%New()
+	  set response.Hostname = $system.INetInfo.LocalHostName()
+	  set response.SessionID = $Get($$$JobSessionId,"XXX")	
+	  set response.Status = "ERROR: " _ error.DisplayString()
+   } 
+   return $$$OK
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SubmitDocumentFileOperation">
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>63489,42321.22898</TimeChanged>
+<TimeCreated>63460,64584.897092</TimeCreated>
+
+<Parameter name="ADAPTER">
+<Default>EnsLib.File.OutboundAdapter</Default>
+</Parameter>
+
+<Property name="OutputDirectory">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="2000"/>
+<Parameter name="MINLEN" value="1"/>
+</Property>
+
+<Parameter name="SETTINGS">
+<Default>OutputDirectory:Basic</Default>
+</Parameter>
+
+<Method name="OnMessage">
+<FormalSpec>request:HSPanasonic.ScanPoint.SubmitDocumentRequest,*response:HSPanasonic.ScanPoint.SubmitDocumentResponse</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	try {
+		if ( ..OutputDirectory = "" ) {
+			set path = $system.Util.ManagerDirectory() _ "../HSPanasonic/"
+			set ..OutputDirectory = ##class(%File).GetDirectory(path) 
+			$$$TRACE("OutputDirectory was empty defaulting to " _ ..OutputDirectory)
+		}
+		if ( '##class(%File).DirectoryExists(..OutputDirectory) ) { //'
+			$$$TRACE("OutputDirectory = '"_..OutputDirectory_"' does not exists, attempting to create")	
+			if ( '##class(%File).CreateDirectoryChain(..OutputDirectory) ) { //'
+				return $$$ERROR("Unable to create " _ ..OutputDirectory)
+			}
+		}
+		if ( ..OutputDirectory '= ..Adapter.FilePath ) {  //'
+			$$$TRACE("Adapter.FilePath = '"_..Adapter.FilePath_"' did not match OutputDirectory")
+			set ..Adapter.FilePath = ..OutputDirectory
+		}
+		set nn=$zstrip(request.Name,"*W")_"."_request.Type
+		set fn=##class(%File).NormalizeFilename(nn,..Adapter.FilePath)
+		$$$TRACE("Filename="_fn)
+		// NEED TO Un b64 encode the request.Body here!
+		set binStream = ##class(%Stream.GlobalBinary).%New()
+		do request.Body.Rewind()
+		while ( 'request.Body.AtEnd ) {
+			do binStream.Write( $system.Encryption.Base64Decode( request.Body.Read() ) )
+		}
+		do binStream.Rewind()
+		$$$TRACE("binStream.Size="_binStream.Size)
+		$$$THROWONERROR(sc, ..Adapter.PutStream(nn,binStream) ) 
+   	    set response = ##class(HSPanasonic.ScanPoint.SubmitDocumentResponse).%New()
+	    set response.Hostname = $system.INetInfo.LocalHostName()
+	    set response.SessionID = $Get($$$JobSessionId,"XXX")	
+	    set response.Status = "OK"
+	} catch error {
+	  set response = ##class(HSPanasonic.ScanPoint.SubmitDocumentResponse).%New()
+	  set response.Hostname = $system.INetInfo.LocalHostName()
+	  set response.SessionID = $Get($$$JobSessionId,"XXX")	
+	  set response.Status = "ERROR: " _ error.DisplayString()
+	}
+	return $$$OK
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SubmitDocumentRequest">
+<Super>Ens.Request</Super>
+<TimeChanged>63462,40275.996445</TimeChanged>
+<TimeCreated>63460,48327.738694</TimeCreated>
+
+<Property name="Timestamp">
+<Type>%TimeStamp</Type>
+</Property>
+
+<Property name="Subject">
+<Type>%ArrayOfDataTypes</Type>
+</Property>
+
+<UDLText name="T">
+<Content><![CDATA[
+// Property Subject As %Collection.ArrayOfDT;
+
+]]></Content>
+</UDLText>
+
+<Property name="User">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="1000"/>
+</Property>
+
+<Property name="Name">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="1000"/>
+</Property>
+
+<Property name="Type">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="1000"/>
+</Property>
+
+<Property name="Size">
+<Type>%Integer</Type>
+</Property>
+
+<Property name="Body">
+<Type>%Stream.GlobalBinary</Type>
+</Property>
+
+<Method name="CreateFromJSONStream">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>stream:%Stream.Object</FormalSpec>
+<ReturnType>HSPanasonic.ScanPoint.SubmitDocumentRequest</ReturnType>
+<Implementation><![CDATA[
+	do stream.Rewind()
+	set j=""
+	while ( 'stream.AtEnd ) { set j=j_stream.Read() }
+	//set cls=..%ClassName(1)
+	set cls="%ZEN.proxyObject"
+	set sc=##class(%ZEN.Auxiliary.jsonProvider).%ConvertJSONToObject(j,cls,.proxy,1)
+	set sdr=..%New()
+	set sdr.Type=proxy.Type
+	set sdr.User = proxy.User
+	set sdr.Body = ##class(%Stream.GlobalBinary).%New()
+	do sdr.Body.Write( proxy.Body )
+	set sdr.Name = proxy.Name
+	set sdr.Subject = ##class(%ArrayOfDataTypes).%New()
+	do proxy.Subject.%CopyToArray(.subject)
+	set key=$order(subject(""))
+	while ( key'="" ) {
+		do sdr.Subject.SetAt(subject(key),key)
+		set key=$order(subject( key ))
+	}
+	// TODO VALIDATE sdr!!
+	do stream.Rewind()		// be kind, always rewind :)
+	return sdr
+]]></Implementation>
+</Method>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DefaultData>SubmitDocumentRequestDefaultData</DefaultData>
+<Data name="SubmitDocumentRequestDefaultData">
+<Structure>listnode</Structure>
+<Subscript>"SubmitDocumentRequest"</Subscript>
+<Value name="1">
+<Value>Timestamp</Value>
+</Value>
+<Value name="2">
+<Value>Subject</Value>
+</Value>
+<Value name="3">
+<Value>User</Value>
+</Value>
+<Value name="4">
+<Value>Name</Value>
+</Value>
+<Value name="5">
+<Value>Type</Value>
+</Value>
+<Value name="6">
+<Value>Size</Value>
+</Value>
+<Value name="7">
+<Value>Body</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SubmitDocumentRequestToHL7">
+<Super>Ens.DataTransformDTL</Super>
+<TimeChanged>63489,36821.443888</TimeChanged>
+<TimeCreated>63461,31925.861777</TimeCreated>
+<DependsOn>HSPanasonic.ScanPoint.SubmitDocumentRequest,EnsLib.HL7.Message</DependsOn>
+
+<XData name="DTL">
+<XMLNamespace>http://www.intersystems.com/dtl</XMLNamespace>
+<Data><![CDATA[
+<transform sourceClass='HSPanasonic.ScanPoint.SubmitDocumentRequest' targetClass='EnsLib.HL7.Message' targetDocType='2.5.1:ORU_R01' create='new' language='objectscript' >
+<assign value='"ORU"' property='target.{MSH:MessageType.MessageCode}' action='set' />
+<assign value='"R01"' property='target.{MSH:MessageType.TriggerEvent}' action='set' />
+<assign value='..CurrentDateTime()' property='target.{MSH:DateTimeOfMessage}' action='set' />
+<assign value='..BLOBToBase64RFC2045MIMELines(source.Body)' property='b64' action='set' />
+<assign value='1' property='target.{PIDgrpgrp(1).PIDgrp.PID:SetIDPID}' action='set' />
+<foreach property='b64' key='li' >
+<assign value='li' property='target.{PIDgrpgrp(1).ORCgrp(1).OBXgrp(li).OBX:SetIDOBX}' action='set' />
+<assign value='b64.GetAt(li)' property='target.{PIDgrpgrp(1).ORCgrp(1).OBXgrp(li).OBX:ObservationValue(1)}' action='set' />
+</foreach>
+<assign value='source.Subject.GetAt("LastName")' property='target.{PIDgrpgrp(1).PIDgrp.PID:PatientName(1).FamilyName}' action='set' />
+<assign value='source.Subject.GetAt("FirstName")' property='target.{PIDgrpgrp().PIDgrp.PID:PatientName().GivenName}' action='set' />
+</transform>
+]]></Data>
+</XData>
+
+<Parameter name="IGNOREMISSINGSOURCE">
+<Default>1</Default>
+</Parameter>
+
+<Parameter name="REPORTERRORS">
+<Default>1</Default>
+</Parameter>
+
+<Method name="BLOBToBase64RFC2045MIMELines">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>stream:%Stream</FormalSpec>
+<ReturnType>%ListOfDataTypes</ReturnType>
+<Implementation><![CDATA[
+	set b64 = ##class(%Library.ListOfDataTypes).%New()
+	do stream.Rewind()
+	set b64stream = ##class(%Stream.TmpCharacter).%New()
+	while ( 'stream.AtEnd ) {
+		set b = $system.Encryption.Base64Encode( stream.Read() )
+		do b64stream.Write( b )
+	}
+	do b64stream.Rewind()
+	set chunkSize = 76
+	while ( 'b64stream.AtEnd ) {
+		/* What is this +2, -2 stuff on chunkSize?
+		   It removes the \r\n which is embedded in the Base64 encoding */
+		set chunk = b64stream.Read( chunkSize + 2)
+		set line = $extract( chunk, 1, (chunkSize - 2) )
+		do b64.Insert( line )  	
+	}
+	return b64
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SubmitDocumentRequestToSDA">
+<Super>Ens.DataTransformDTL</Super>
+<TimeChanged>63462,48047.494601</TimeChanged>
+<TimeCreated>63462,46046.817311</TimeCreated>
+<DependsOn>HSPanasonic.ScanPoint.SubmitDocumentRequest,EnsLib.EDI.XML.Document</DependsOn>
+
+<Parameter name="IGNOREMISSINGSOURCE">
+<Default>1</Default>
+</Parameter>
+
+<Parameter name="REPORTERRORS">
+<Default>1</Default>
+</Parameter>
+
+<XData name="DTL">
+<XMLNamespace>http://www.intersystems.com/dtl</XMLNamespace>
+<Data><![CDATA[
+<transform sourceClass='HSPanasonic.ScanPoint.SubmitDocumentRequest' targetClass='EnsLib.EDI.XML.Document' targetDocType='HS.SDA3.Container:Container' create='new' language='objectscript' >
+<assign value='source.Subject.GetAt("LastName")' property='target.{Patient.Name.FamilyName}' action='set' />
+<assign value='source.Subject.GetAt("FirstName")' property='target.{Patient.Name.GivenName}' action='set' />
+<code>
+<![CDATA[ set stream=##class(%GlobalBinaryStream).%New()
+ do source.Body.Rewind()
+ while ( 'source.Body.AtEnd ) { do stream.Write( source.Body.Read() ) }
+ do stream.Write("HELLO FOO BAR")
+ do source.Body.Rewind() 
+ do stream.Rewind()]]]]><![CDATA[></code>
+<assign value='source.Name' property='target.{Documents(1).DocumentName}' action='set' />
+<assign value='stream.Read()' property='target.{Documents(1).Stream}' action='set' />
+</transform>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="HSPanasonic.ScanPoint.SubmitDocumentResponse">
+<Super>Ens.Response</Super>
+<TimeChanged>63461,27483.725869</TimeChanged>
+<TimeCreated>63460,49478.070615</TimeCreated>
+
+<Property name="Hostname">
+<Type>%String</Type>
+</Property>
+
+<Property name="SessionID">
+<Type>%String</Type>
+</Property>
+
+<Property name="Status">
+<Type>%String</Type>
+<Parameter name="MAXLEN" value="10000"/>
+</Property>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DefaultData>SubmitDocumentResponseDefaultData</DefaultData>
+<Data name="SubmitDocumentResponseDefaultData">
+<Structure>listnode</Structure>
+<Subscript>"SubmitDocumentResponse"</Subscript>
+<Value name="1">
+<Value>Hostname</Value>
+</Value>
+<Value name="2">
+<Value>SessionID</Value>
+</Value>
+<Value name="3">
+<Value>Status</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="HSPanasonic.ScanRegistry.ConfigurationOperation">
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>63487,36720.78576</TimeChanged>
+<TimeCreated>63459,66288.135874</TimeCreated>
+
+<Method name="CreateResponse">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[ResponseCode:%String,&Headers="",Content:%String=""]]></FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+  set stream = ##class(%GlobalCharacterStream).%New()
+  set stream.Attributes("ResponseCode")=ResponseCode
+  if ( $data(Headers) ) {
+    set header=$order(Headers(""))
+    while ( header'="" ) {
+      set stream.Attributes(header)=Headers(header) 
+      set header=$order(Headers(header))
+    }
+  }
+  if ( ""'=Content ) {
+    do stream.Write(Content)
+  }
+  return ##class(EnsLib.HTTP.GenericMessage).%New(stream,,stream)
+]]></Implementation>
+</Method>
+
+<Method name="MethodNotAllowed">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+  set stream = ##class(%GlobalCharacterStream).%New()
+  //set stream.Attributes("ResponseCode")="405 Method Not Allowed"
+  set stream.Attributes("ResponseCode")="405 Method Not Allowed"
+  set stream.Attributes("Allow")="POST" 
+  return ##class(EnsLib.HTTP.GenericMessage).%New(stream,,stream)
+]]></Implementation>
+</Method>
+
+<Parameter name="ValidateApiUrl">
+<Type>%String</Type>
+<Default>/validateApi</Default>
+</Parameter>
+
+<Parameter name="HeaderUser">
+<Type>%String</Type>
+<Default>x-healthshare-username</Default>
+</Parameter>
+
+<Parameter name="HeaderPassword">
+<Type>%String</Type>
+<Default>x-healthshare-password</Default>
+</Parameter>
+
+<Parameter name="HeaderApiKey">
+<Type>%String</Type>
+<Default>x-healthshare-apikey</Default>
+</Parameter>
+
+<Method name="HandleValidateApiRequest">
+<FormalSpec>request:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>EnsLib.HTTP.GenericMessage</ReturnType>
+<Implementation><![CDATA[
+	set sql="select ID from HSPanasonic_ScanRegistry.Scanner where ApiKey = ?"
+	set statement = ##class(%SQL.Statement).%New()
+	$$$THROWONERROR(sc,statement.%Prepare(sql))
+	set apikey = request.HTTPHeaders.GetAt( ..#HeaderApiKey )
+	$$$TRACE("HandleValidateApiRequest apikey="_apikey)
+	set result=statement.%Execute( apikey )
+    set row=result.%Next(.sc)
+    if ( result.%ROWCOUNT '= 1 || $$$ISERR(sc) || ('result) ) {
+      return ..CreateResponse("403 Forbidden")
+    }
+	return ..CreateResponse("200 OK")
+]]></Implementation>
+</Method>
+
+<Method name="OnMessage">
+<FormalSpec>request:EnsLib.HTTP.GenericMessage,response:EnsLib.HTTP.GenericMessage</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+  //set response=..CreateResponse("200 OK",,"Hello World!")
+  //quit $$$OK
+  try {
+  set method=request.HTTPHeaders.GetAt("HttpRequest")
+  set url = request.HTTPHeaders.GetAt("URL")
+  $$$TRACE("method="_method_" url="_url)
+  if ( (url=..#ValidateApiUrl) && (method="GET") ) {
+		set response=..HandleValidateApiRequest(request)
+		return $$$OK
+  }
+  if ( method'="POST" ) {
+	set response=..MethodNotAllowed()
+	return $$$OK
+  }
+  // read the user/pass out of headers
+  set username=request.HTTPHeaders.GetAt(..#HeaderUser)
+  set password=request.HTTPHeaders.GetAt(..#HeaderPassword)
+  $$$TRACE("username="_username_" password="_password)
+  if ( ""=username || ""=password ) {
+    set response=..CreateResponse("403 Forbidden")
+    return $$$OK
+  }
+  set sql="select ID from Ens_Config.Credentials where Username = ? and Password = ?"
+  set statement=##class(%SQL.Statement).%New()
+  $$$THROWONERROR(sc,statement.%Prepare(sql))
+  set result = statement.%Execute(username,password)
+  set row=result.%Next(.sc)
+  if ( result.%ROWCOUNT '= 1 || $$$ISERR(sc) || ('result) ) {
+    set response=..CreateResponse("403 Forbidden",,"%ROWCOUNT="_result.%ROWCOUNT)
+    return $$$OK
+  }
+  set credential = ##class(Ens.Config.Credentials).%OpenId( result.%GetData(1) )
+  // run sql against Scanners by Credential
+  set sql="select ID from HSPanasonic_ScanRegistry.Scanner where Credential = ?"
+  set statement=##class(%SQL.Statement).%New()
+  $$$THROWONERROR(sc,statement.%Prepare(sql))
+  set result = statement.%Execute(credential.SystemName)
+  set row=result.%Next(.sc)
+  if ( result.%ROWCOUNT '= 1 || $$$ISERR(sc) || ('result) ) {
+    set response=..CreateResponse("404 Not Found",,"%ROWCOUNT="_result.%ROWCOUNT)
+    return $$$OK
+  } 
+  set config=##class(HSPanasonic.ScanRegistry.Scanner).%OpenId( result.%GetData(1) )
+  set stream = ##class(%GlobalCharacterStream).%New()
+  if ( 'config.Active ) {
+    set response=..CreateResponse("404 Not Found",,"Resource not active.")
+  } else {
+    set headers("x-healthshare-apikey")=config.ApiKey
+    set headers("x-healthshare-endpoint")=config.EndPoint
+    set response=..CreateResponse("200 OK",.headers)
+  }
+  return $$$OK
+  } catch error {
+    set msg=error.DisplayString()
+    set response=..CreateResponse("500 Internal Server Error",,msg)
+    return $$$OK
+  }
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.ScanRegistry.Production">
+<Super>Ens.Production</Super>
+<TimeChanged>63460,37897.958677</TimeChanged>
+<TimeCreated>63459,68367.615879</TimeCreated>
+
+<XData name="ProductionDefinition">
+<Data><![CDATA[
+<Production Name="HSPanasonic.ScanRegistry.Production" LogGeneralTraceEvents="false">
+  <Description></Description>
+  <ActorPoolSize>2</ActorPoolSize>
+  <Item Name="ConfiguationOperation" Category="" ClassName="HSPanasonic.ScanRegistry.ConfigurationOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="true" Schedule="">
+  </Item>
+  <Item Name="ConfigurationService" Category="" ClassName="EnsLib.HTTP.GenericService" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
+    <Setting Target="Host" Name="TargetConfigName">ConfiguationOperation</Setting>
+    <Setting Target="Adapter" Name="Port">20187</Setting>
+    <Setting Target="Host" Name="ArchiveIO">0</Setting>
+    <Setting Target="Adapter" Name="CallInterval">1</Setting>
+    <Setting Target="Host" Name="EnableStandardRequests">0</Setting>
+  </Item>
+</Production>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="HSPanasonic.ScanRegistry.Scanner">
+<Super>%Persistent</Super>
+<TimeChanged>63483,44591.965275</TimeChanged>
+<TimeCreated>63459,70124.576257</TimeCreated>
+
+<Property name="Credential">
+<Description>
+Pointer to Ens credential</Description>
+<Type>%String</Type>
+</Property>
+
+<Property name="ApiKey">
+<Type>%String</Type>
+</Property>
+
+<Property name="EndPoint">
+<Type>%String</Type>
+</Property>
+
+<Property name="Active">
+<Type>%Boolean</Type>
+</Property>
+
+<Method name="FindByCredential">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>credential:%String</FormalSpec>
+<ReturnType>HSPanasonic.ScanRegistry.Scanner</ReturnType>
+<Implementation><![CDATA[
+	new $namespace
+	set $namespace = "ScanRegistry"
+	set cred=" "_$zconvert(credential,"U")
+	
+	set id=$order(^HSPanasonic.ScanReFE36.ScannerI("CredentialIndex",cred,""))
+	set ^id($i(^id))=id
+	if ( id = "" ) {
+		throw ##class(%Exception.General).%New("Credential='"_credential_"' not found! cred='"_cred_"'")
+	}
+	return ..%OpenId(id)
+]]></Implementation>
+</Method>
+
+<Query name="List">
+<Type>%SQLQuery</Type>
+<SqlQuery>	select ID,Credential,ApiKey,EndPoint,Active from HSPanasonic_ScanRegistry.Scanner</SqlQuery>
+</Query>
+
+<Index name="CredentialIndex">
+<Data>Credential</Data>
+<Properties>Credential</Properties>
+<Unique>1</Unique>
+</Index>
+
+<Index name="ApiKeyIndex">
+<Data>ApiKey</Data>
+<Properties>ApiKey</Properties>
+<Unique>1</Unique>
+</Index>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DataLocation>^HSPanasonic.ScanReFE36.ScannerD</DataLocation>
+<DefaultData>ScannerDefaultData</DefaultData>
+<IdLocation>^HSPanasonic.ScanReFE36.ScannerD</IdLocation>
+<IndexLocation>^HSPanasonic.ScanReFE36.ScannerI</IndexLocation>
+<StreamLocation>^HSPanasonic.ScanReFE36.ScannerS</StreamLocation>
+<ExtentSize>100000</ExtentSize>
+<Data name="ScannerDefaultData">
+<Structure>listnode</Structure>
+<Subscript/>
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>Credential</Value>
+</Value>
+<Value name="3">
+<Value>ApiKey</Value>
+</Value>
+<Value name="4">
+<Value>EndPoint</Value>
+</Value>
+<Value name="5">
+<Value>Active</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="HSPanasonic.ScanRegistry.Scanners">
+<Super>%Persistent</Super>
+<TimeChanged>63459,70084.148816</TimeChanged>
+<TimeCreated>63459,70084.148816</TimeCreated>
+
+<Property name="Credential">
+<Description>
+Pointer to Ens credential</Description>
+<Type>%String</Type>
+</Property>
+
+<Property name="ApiKey">
+<Type>%String</Type>
+</Property>
+
+<Property name="EndPoint">
+<Type>%String</Type>
+</Property>
+
+<Property name="Name">
+<Type>%String</Type>
+</Property>
+
+<Property name="Active">
+<Type>%Boolean</Type>
+</Property>
+</Class>
+
+
+<Class name="HSPanasonic.Setup">
+<Super>%SYSTEM.Help</Super>
+<TimeChanged>63489,49422.627525</TimeChanged>
+<TimeCreated>63459,66519.289348</TimeCreated>
+
+<Parameter name="VERSION">
+<Type>%String</Type>
+<Default>0.0.1</Default>
+</Parameter>
+
+<Method name="OnPage">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	&html<
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HSPanasonic Configuration Utility</title>
+
+    <!-- Bootstrap -->
+<link href="//maxcdn.bootstrapcdn.com/bootstrap/3.2.0/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- HTML5 Shim and Respond.js IE8 support of HTML5 elements and media queries -->
+    <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+    <!--[if lt IE 9]>
+      <script src="https://oss.maxcdn.com/html5shiv/3.7.2/html5shiv.min.js"></script>
+      <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
+    <![endif]-->
+  </head>
+  <body role="document">
+	 <!-- Fixed navbar -->
+    <div class="navbar navbar-inverse navbar-fixed-top" role="navigation">
+      <div class="container">
+        <div class="navbar-header">
+          <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target=".navbar-collapse">
+            <span class="sr-only">Toggle navigation</span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+          <a class="navbar-brand" href="#">Bootstrap theme</a>
+        </div>
+        <div class="navbar-collapse collapse">
+          <ul class="nav navbar-nav">
+            <li class="active"><a href="#">Home</a></li>
+            <li><a href="#about">About</a></li>
+            <li><a href="#contact">Contact</a></li>
+            <li class="dropdown">
+              <a href="#" class="dropdown-toggle" data-toggle="dropdown">Dropdown <span class="caret"></span></a>
+              <ul class="dropdown-menu" role="menu">
+                <li><a href="#">Action</a></li>
+                <li><a href="#">Another action</a></li>
+                <li><a href="#">Something else here</a></li>
+                <li class="divider"></li>
+                <li class="dropdown-header">Nav header</li>
+                <li><a href="#">Separated link</a></li>
+                <li><a href="#">One more separated link</a></li>
+              </ul>
+            </li>
+          </ul>
+        </div><!--/.nav-collapse -->
+      </div>
+    </div>
+
+    <div class="container theme-showcase" role="main">
+
+      <!-- Main jumbotron for a primary marketing message or call to action -->
+      <div class="jumbotron">
+    <h3>Scanning Configuration Utility</h3>
+	>
+	
+	set status = $get(^HSPanasonic.Setup("InstallStatus"))
+	set ok=0
+	if ( $listvalid( status ) ) {
+		set ok=($list(status,1)="OK")
+		if ( 'ok  ) { //'
+			do ..showInstallError()
+		} else {
+			do ..showInstallStatus()
+		}
+	} else { 		// nothing installed
+		do ..freshInstall()
+	}
+	&html<
+   	</div>
+	>
+	do ..showConfiguration()
+	&html<
+	</div>
+ <!-- jQuery (necessary for Bootstrap's JavaScript plugins) ' -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+    <!-- Include all compiled plugins (below), or include individual files as needed -->
+<script src="//maxcdn.bootstrapcdn.com/bootstrap/3.2.0/js/bootstrap.min.js"></script>
+
+	>
+		//'
+		set points = ^["ScanRegistry"]HSPanasonic.Setup.Defaults("Namespaces")
+		set ports = ^["ScanRegistry"]HSPanasonic.Setup.Defaults("Ports")
+		for i=1:1:$listlength(points) {
+			set point=$list(points,i)
+			&html<
+				<script type="text/javascript">
+				$(function(){
+					$( '#("#btnEditSP"_point)#' ).click(function(e){
+						alert( ' #( "#btnEditSP"_point)# ' );
+					});
+				});
+				</script>
+			>
+		}
+	&html<
+  </body>
+</html>
+	>
+	return $$$OK
+	//'
+]]></Implementation>
+</Method>
+
+<Method name="showInstallError">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	set status = $get(^HSPanasonic.Setup("InstallStatus"))
+	&html<
+	Status: 
+	<span class="label label-danger"> #( $list(status,1) )# </span>
+	#( $ZDT( $list(status,2) ) )#
+	>
+]]></Implementation>
+</Method>
+
+<Method name="showInstallStatus">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	set status = $get(^HSPanasonic.Setup("InstallStatus"))
+	&html<
+	Status: 
+	<span class="label label-success"> #( $list(status,1) )# </span><br/>
+	Timestamp: #( $ZDT( $list(status,2) ) )#
+	>
+]]></Implementation>
+</Method>
+
+<Method name="showConfiguration">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	&html<
+<div class="page-header">
+        <h1>ScanPoints</h1>
+      </div>
+      <div class="row">
+        <div xclass="col-md-6">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>EndPoint</th>
+                <th>Api Key</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+		>
+		//'	
+		set points = ^["ScanRegistry"]HSPanasonic.Setup.Defaults("Namespaces")
+		set ports = ^["ScanRegistry"]HSPanasonic.Setup.Defaults("Ports")
+		for i=1:1:$listlength(points) {
+			set point=$list(points,i)
+			set scannerConfig = ##class(HSPanasonic.ScanRegistry.Scanner).FindByCredential(point)
+			&html<
+              <tr>
+                <td>#($list(points,i))#</td>
+                <td>#( scannerConfig.EndPoint )#</td>
+				<td> #( scannerConfig.ApiKey )# </td>
+                <td>
+				<span class="label label-success"> OK </span>
+				</td>
+                <td>
+ 				<button id="#("btnEditSP"_point)#"
+						type="button" class="btn btn-sm btn-primary"
+				data-toggle="modal" data-target="#newScanPoint">
+				Edit	
+				</button>
+
+				</td> </tr>
+			>
+		}
+		&html<
+              <tr>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td></td>
+                <td>
+ 				<button type="button" class="btn btn-sm btn-primary"
+				data-toggle="modal" data-target="#newScanPoint">
+				Add New +
+				</button>
+				</td>
+              </tr>
+		</tbody>
+          </table>
+        </div>
+		<!-- Modal -->
+<div class="modal fade" id="newScanPoint" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal"><span aria-hidden="true">&times;</span><span class="sr-only">Cancel</span></button>
+        <h4 class="modal-title" id="myModalLabel">ScanPoint</h4>
+      </div>
+      <div class="modal-body">
+        <form class="form-horizontal" role="form">
+  <div class="form-group">
+    <label for="inputNewScanPointName" class="col-sm-2 control-label">
+	Name
+	</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" id="inputNewScanPointName" 
+			 placeholder="New ScanPoint Name">
+    </div>
+  </div>
+  <div class="form-group">
+    <label for="inputNewScanPointPassword" class="col-sm-2 control-label">
+		Password</label>
+    <div class="col-sm-10">
+      <input type="password" class="form-control" 
+			id="inputNewScanPointPassword" placeholder="Password">
+    </div>
+  </div>  
+  <div class="form-group">
+    <label for="inputNewScanPointApiKey" class="col-sm-2 control-label">
+		ApiKey</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" 
+			id="inputNewScanPointApiKey" placeholder="#($system.Util.CreateGUID())#">
+    </div>
+  </div>  <div class="form-group">
+    <label for="inputNewScanPointPort" class="col-sm-2 control-label">
+		Port #</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" 
+			id="inputNewScanPointPort" placeholder="Port #">
+    </div>
+  </div>  
+  <div class="form-group">
+    <label for="inputNewScanPointBindAddr" class="col-sm-2 control-label">
+		Bind Address</label>
+    <div class="col-sm-10">
+      <input type="text" class="form-control" 
+			id="inputNewScanPointBindAddr" placeholder="Host/IP to bind">
+    </div>
+  </div>
+</form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary">Save changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+	>
+]]></Implementation>
+</Method>
+
+<Method name="freshInstall">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+</Method>
+
+<Method name="InstallDemo">
+<Description>
+Installs a standard demo system
+With 3 scan points and a registry</Description>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	set nl=$c(13,10)
+	set b =   "_  _ ____ ____ _    ___ _  _ ____ _  _ ____ ____ ____   "_nl 
+	set b = b_"|__| |___ |__| |     |  |__| [__  |__| |__| |__/ |___   "_nl
+    set b = b_"|  | |___ |  | |___  |  |  | ___] |  | |  | |  \ |___   "_nl
+	set b = b_"___  ____ _  _ ____ ____ ____ _  _ _ ____  ____ ___  _  _"_nl
+	set b = b_"|__] |__| |\ | |__| [__  |  | |\ | | |     [__  |  \ |_/ "_nl
+	set b = b_"|    |  | | \| |  | ___] |__| | \| | |___  ___] |__/ | \_"_nl
+
+	Use 0::"^%XDTM"
+	write /ab,b,/aa
+	write "Version: ", ..#VERSION,!
+	write "Installation Utility",!
+	write "Current Settings:",!
+	merge ^||HSPanasonic.Setup.Defaults.Backup = ^HSPanasonic.Setup.Defaults
+   	kill ^HSPanasonic.Setup.Defaults
+	set ns=$listbuild("ScanPoint1","ScanPoint2","ScanPoint3")
+	set ^HSPanasonic.Setup.Defaults("Namespaces")=ns
+	set ^HSPanasonic.Setup.Defaults("Ports")=$lb(8765,8766,8767)
+	set pwds=$listbuild("password","password","password")
+	set ^HSPanasonic.Setup.Defaults("Password")=pwds
+	set ip=$system.INetInfo.HostNameToAddr($system.INetInfo.LocalHostName())
+	set ^HSPanasonic.Setup.Defaults("Hostname")=ip
+
+namespaceConfig
+	write "ScanPoint Namespaces: "
+	write $listtostring(^HSPanasonic.Setup.Defaults("Namespaces"))
+	set value = 1
+	set s=##class(%Prompt).GetYesNo("Accept?",.value)
+	if ( value '= 1 ) {  //'
+		write !,"Enter ScanPoint namespaces: "
+		read spns
+		break
+		set ^HSPanasonic.Setup.Defaults("Namespaces")=$listfromstring(spns,",")
+		goto namespaceConfig
+	}
+portConfig
+	write !,"ScanPoint Ports: "
+	write $listtostring(^HSPanasonic.Setup.Defaults("Ports"))
+	set value = 1
+	set s=##class(%Prompt).GetYesNo("Accept?",.value)
+	if ( value '= 1 ) {  //'
+		write !,"Enter ScanPoint ports: "
+		read spns
+		set ^HSPanasonic.Setup.Defaults("Ports")=$listfromstring(spns,",")
+		goto portConfig
+	}
+hostnameConfig
+	write !,"Hostname to bind: "
+	write ^HSPanasonic.Setup.Defaults("Hostname")
+	set value = 1
+	set s=##class(%Prompt).GetYesNo("Accept?",.value)
+	if ( value '= 1 ) {  //'
+		write !,"Enter Hostname: "
+		read spns
+		set ^HSPanasonic.Setup.Defaults("Hostname")=spns
+		goto hostnameConfig
+	}	
+	zw ^HSPanasonic.Setup.Defaults
+	write "This tool will setup a ScanRegistry and ScanPoints using the " 
+	write "settings above.",!
+	set continue = "N"
+	read "Do you wish to continue <No|Yes>?",continue,!
+	if ( continue '= "Yes" ) {  //'
+		merge ^HSPanasonic.Setup.Defaults = ^||HSPanasonic.Setup.Defaults.Backup
+		quit
+	} 
+	do ..Install()
+	write !,"Installation Complete.",!
+	read "Do you wish to test the demo installation <N|Yes>?",continue
+	if ( continue '= "Yes" ) {  //'
+		write !,"Adios"
+		quit
+	}
+	do ..TestInstallDemo()
+	quit
+]]></Implementation>
+</Method>
+
+<Method name="Install">
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	try {
+		new $namespace
+		set $namespace="HSLIB"
+		if ( '$data( ^HSPanasonic.Setup.Defaults ) ) {  //'
+			// need to query and setup points to install	
+		}
+		do ..InstallSchemas()
+		do ..InstallRegistry()
+		do ..InstallScanPoints()
+		set ^HSPanasonic.Setup("InstallStatus")=$lb("OK",$ZTS)
+	} catch error {
+		set ^HSPanasonic.Setup("InstallStatus")=$lb(error.DisplayString(),$ZTS)
+		write error.DisplayString()
+		
+	}
+]]></Implementation>
+</Method>
+
+<Method name="HCF">
+<Description>
+Halt and Catch Fire - completely wipes out everything HSPanasonic 
+deletes the ScanRegistry and ScanPoints
+USE WITH CAUTION!</Description>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	Use 0::"^%XDTM"
+	write /am,"Warning! This will completely wipe the HSPanasonic SDK from your system!",/aa,!
+	read "Do you wish to continue <N|Yes>?",continue
+	if ( continue '= "Yes" ) {  //'
+		write !,"Cancelled"
+		quit
+	} 
+	write !
+	write "OK - you we're warned.",!
+	do ..UnInstall()
+	do $system.OBJ.DeletePackage("HSPanasonic")
+]]></Implementation>
+</Method>
+
+<Method name="UnInstall">
+<Description>
+Uninstalls the HSPanasonic registry and scan points</Description>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	try {
+		set $namespace="HSLIB"
+		do ..UnInstallScanPoints()
+		do ..UnInstallRegistry()
+		do ..UnInstallSchemas()
+	} catch error {
+		set ^HSPanasonic.Setup("UninstallStatus")=$lb(error.DisplayString(),$zts)
+		write error.DisplayString(),!
+	}
+]]></Implementation>
+</Method>
+
+<Method name="InstallSchemas">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	set schema = ##class(%File).TempFilename("xml")
+	do ##class(HS.SDA3.Container).ExportXMLSchemaAPI( schema )
+	set ^HSPanasonic.Setup("HS.SDA3.Container-schema")=schema
+]]></Implementation>
+</Method>
+
+<Method name="getSDASchemaFile">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[	return ^["HSLIB"]HSPanasonic.Setup("HS.SDA3.Container-schema")
+]]></Implementation>
+</Method>
+
+<Method name="UnInstallSchemas">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+</Method>
+
+<Method name="UnInstallRegistry">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	write "Uninstalling ScanRegistry"
+	do ..UnInstallNS("ScanRegistry")
+]]></Implementation>
+</Method>
+
+<Method name="UnInstallScanPoints">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	for i=1:1:$listlength(^HSPanasonic.Setup.Defaults("Namespaces")) {
+		set ns=$list(^HSPanasonic.Setup.Defaults("Namespaces"),i)
+		write "Uninstalling ",ns,!
+		try {
+        do ..UnInstallNS(ns)
+		} catch error { 
+			write "Error uninstalling ",ns," Please run UnInstall again.",!
+			write error.DisplayString(),!
+		}
+	}
+]]></Implementation>
+</Method>
+
+<Method name="UnInstallNS">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>ns:%String</FormalSpec>
+<Implementation><![CDATA[
+	do ..dbg("UnInstallNS("""_ns_""")")
+	if ( '##class(%SYS.Namespace).Exists(ns) ) {  //'
+		do ..dbg(ns _ " does not exist!")
+		return
+	}
+	set currNS=$namespace
+	set $namespace = ns
+	do ##class(Ens.Director).StopProduction(30,1)
+	Set $namespace="%SYS"
+    $$$THROWONERROR(tSC,##class(%EnsembleMgr).DisableNamespace(ns,1))
+    $$$THROWONERROR(tSC,##class(%EnsembleMgr).deleteNamespace(ns,1,1))
+    set tDBResource="%DB_"_ns
+	set $namespace=currNS
+    do ##class(HS.Util.Installer).DeleteResource(tDBResource)
+]]></Implementation>
+</Method>
+
+<Method name="validateSetupConfig">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	  set defaults=$listbuild("ScanPointTest1","ScanPointTest2","ScanPointTest3")
+	  set defaultPorts = $lb(8765,8766,8767)
+	  if ( '$data(^HSPanasonic.Setup.Defaults) ) {   //'
+	    set ^HSPanasonic.Setup.Defaults("Namespaces")=defaults
+	    set ^HSPanasonic.Setup.Defaults("Ports")=defaultPorts
+		set ip=$system.INetInfo.HostNameToAddr($system.INetInfo.LocalHostName())
+	    set ^HSPanasonic.Setup.Defaults("Hostname")=ip
+	  } else {
+		set namespaces=^HSPanasonic.Setup.Defaults("Namespaces")
+		set ports=^HSPanasonic.Setup.Defaults("Ports")
+		set msg=##class(%ListOfDataTypes).%New()
+		if ( '$listvalid(namespaces) ) {  //'
+			do msg.Insert("$list expected in ^HSPanasonic.Setup.Defaults(""Namespaces"")")
+		}
+		if ( '$listvalid(ports) ) {   //'
+		  do msg.Insert("$list expected in ^HSPanasonic.Setup.Default(""Ports"")")
+		}
+		if ( $listlength(namespaces)'=$listlength(ports) ) {  //'
+		  do msg.Insert("Number of namespaces does not match number of ports. Check ^HSPanasonic.Setup.Defaults")
+		}
+		if ( msg.Count() > 0 ) {
+			throw ##class(%Exception.General).%New("Invalid Setup",,msg)
+		}
+	  }	
+	  write "Using configuration:",!
+	  zw ^HSPanasonic.Setup.Defaults
+]]></Implementation>
+</Method>
+
+<Method name="AddHSPPackageMap">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>ns</FormalSpec>
+<Implementation><![CDATA[
+  new $namespace
+  set $namespace="%SYS"
+  set pkg="HSPanasonic"
+  set properties("Database")="HSLIB"
+  $$$THROWONERROR(sc,##class(Config.MapPackages).Create(ns,pkg,.properties))
+]]></Implementation>
+</Method>
+
+<Method name="InstallRegistry">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	try {
+	
+	  do ..validateSetupConfig()
+	  $$$THROWONERROR(sc,##class(HS.Util.Installer.Foundation).Install("ScanRegistry"))
+	  do ..AddHSPPackageMap("ScanRegistry")
+	  new $namespace
+      set $namespace="ScanRegistry"
+	  merge ^HSPanasonic.Setup.Defaults = ^["HSLIB"]HSPanasonic.Setup.Defaults
+	  do ..CreateScannerConfigs()
+	  set production="HSPanasonic.ScanRegistry.Production"
+      do ##class(Ens.Config.Production).LoadFromClass(production)
+	  $$$THROWONERROR(sc,##class(Ens.Director).StartProduction(production))
+	} catch error {
+		write error.DisplayString()
+		throw error
+	}
+]]></Implementation>
+</Method>
+
+<Method name="InstallScanPoints">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	set currNS=$namespace
+	for i=1:1:$ll(^HSPanasonic.Setup.Defaults("Namespaces")) {
+		set ns=$list(^HSPanasonic.Setup.Defaults("Namespaces"),i)
+	
+		write "Mapping ^EnsEDI.XML.Schema(""HS.SDA3.Container"")...",!	
+		merge ^EnsEDI.XML.Schema("HS.SDA3.Container")=^["HSLIB"]EnsEDI.XML.Schema("HS.SDA3.Container")
+		set port=$list(^HSPanasonic.Setup.Defaults("Ports"),i)
+	  $$$THROWONERROR(sc,##class(HS.Util.Installer.Foundation).Install(ns))
+	  do ..AddHSPPackageMap(ns)
+	  set $namespace=ns	
+	  set production="HSPanasonic.ScanPoint.Production"
+	  // todo - need to update Port on the EndpointService!
+	  // need to update the ScanRegistryURL on the EndpointOperation
+      do ##class(Ens.Config.Production).LoadFromClass(production)
+	  set prod=##class(Ens.Config.Production).%OpenId(production)
+	  set item=prod.FindItemByConfigName("EndpointService")
+	  set setting=item.Settings.GetAt(2)
+	  set setting.Value=port
+	  $$$THROWONERROR(sc,prod.%Save())
+	  $$$THROWONERROR(sc,##class(Ens.Director).StartProduction(production))
+	  set $namespace=currNS
+	}
+]]></Implementation>
+</Method>
+
+<Method name="CreateScannerConfigs">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	set sampleCreds = ^["HSLIB"]HSPanasonic.Setup.Defaults("Namespaces") 
+	new $namespace
+    set $namespace = "ScanRegistry"
+	// remove any sample creds already there
+    set list = ##class(Ens.Config.CredentialsList).OpenAll()
+	for i=1:1:list.CredentialsItems.Count() {
+		set item=list.CredentialsItems.GetAt(i)
+		if ( $listfind(sampleCreds,item.SystemName) ) {
+			$$$THROWONERROR(sc,item.%Delete())
+		}
+	}
+	for i=1:1:$listlength(sampleCreds) {
+		set scred=$list(sampleCreds,i)
+		set cred = ##class(Ens.Config.Credentials).%New()
+		set cred.SystemName=scred
+		set cred.Username=scred
+		set cred.Password="password"
+		$$$THROWONERROR(sc,cred.%Save())
+
+		set scanner=##class(HSPanasonic.ScanRegistry.Scanner).%New()
+		set scanner.Credential=scred
+		set port=$list(^["HSLIB"]HSPanasonic.Setup.Defaults("Ports"),i)
+		set scanner.EndPoint=..CreateEndPointURL(scred,port)
+		set scanner.ApiKey=$system.Util.CreateGUID()
+		set scanner.Active = 1
+		$$$THROWONERROR(sc,scanner.%Save())
+	}
+]]></Implementation>
+</Method>
+
+<Method name="CreateEndPointURL">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>ns:%String,port</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	// http://<hostname>:<port>
+	set host=$get(^|"HSLIB"|HSPanasonic.Setup.Defaults("Hostname"))
+	if ( host = "" ) {
+		set host = $system.INetInfo.HostNameToAddr( $system.INetInfo.LocalHostName() )
+	}
+	return "http://"_host_":"_port
+]]></Implementation>
+</Method>
+
+<Method name="dbg">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>msg</FormalSpec>
+<Implementation><![CDATA[	write msg,!
+]]></Implementation>
+</Method>
+
+<Method name="BuildKit">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>path:%String=$system.Util.ManagerDirectory()</FormalSpec>
+<Implementation><![CDATA[
+	try {
+	 new $namespace
+	 set $namespace = "HSLIB"
+	 set kit = "HSPanasonic.SDK_" _ ..#VERSION _ ".xml"
+	 set fullkit = path _ kit
+	 do ..dbg("BuiltKit started:" _ fullkit ) 
+	 $$$THROWONERROR(sc,$system.OBJ.ExportPackage("HSPanasonic",fullkit))	
+	 write !,"Kit complete @",$ZDT($ZTS),!
+	 write fullkit,!
+	} catch error {
+	 write "Error: ",error.DisplayString(),!
+	}
+]]></Implementation>
+</Method>
+
+<Method name="TestInstallDemo">
+<Description>
+Tests that a demo installation works properly.
+For each ScanPoint do a test /subjectSearch 
+and /submitDocument</Description>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	try {
+		do ..testDemoInstallx()
+	} catch error {
+		write error.DisplayString()
+	}
+]]></Implementation>
+</Method>
+
+<Method name="testDemoInstallx">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	new $namespace
+	set $namespace = "ScanRegistry"
+	set points = ^["ScanRegistry"]HSPanasonic.Setup.Defaults("Namespaces")
+    set ports = ^["ScanRegistry"]HSPanasonic.Setup.Defaults("Ports")
+	write "HSPanasonic Demo Install Testing Utility",!
+	for i=1:1:$listlength(points) {
+		set point=$list(points,i)
+		set cfg = 
+			##class(HSPanasonic.ScanRegistry.Scanner).FindByCredential(point)
+	
+		// fetch an api-key
+		set cred = ##class(Ens.Config.Credentials).%OpenId(point)
+		write !,"Testing " _ point,!	
+		set headers("x-healthshare-username")=cred.Username
+		set headers("x-healthshare-password")=cred.Password
+		set response = ..POST("http://localhost:20187/",.headers)
+		//do response.OutputHeaders()
+		if ( response.StatusCode '= 200 ) { //'
+			write "Error fetching apikey for " _ point
+			do response.OutputToDevice()
+			continue
+		} else {
+			write "EndPoint and ApiKey from ScanRegistry was SUCCESSFUL",!
+		} 
+		set endpoint = response.GetHeader("X-HEALTHSHARE-ENDPOINT")
+		set apikey = response.GetHeader("X-HEALTHSHARE-APIKEY")
+
+		set search = "{ ""LastName"" : ""Smith"" }"
+		kill headers
+		set headers("x-healthshare-apikey")=apikey
+		set response = ..POST(endpoint _ "/subjectSearch",.headers,search)
+		if ( response.StatusCode '= 200 ) { //'
+			write "Error calling /subjectSearch for " _ point,!
+			do response.OutputToDevice()
+			continue
+		} 
+		write "/subjectSearch for " _ point _ " was SUCCESSFUL",!
+		set sdr = ##class(%ZEN.proxyObject).%New()
+		set sdr.Name = "TestDocument."_$random(100000)+1_"."_point
+		set sdr.Type = "txt"
+		set sdr.Subject = ##class(%ZEN.proxyObject).%New()
+		set sdr.Subject.LastName = "Smith"
+		set sdr.Subject.FirstName = "John"
+		set sdr.Subject.SSN = "123-23-1234"
+		set fakeDoc = ""
+		for j=1:1:25 { 	// 25 lines in a fake document
+			set line = "Hello World! Line #"_j_$c(13,10)
+			set fakeDoc = fakeDoc _ line
+		}	
+		set sdr.Body = $system.Encryption.Base64Encode( fakeDoc ) 
+		set sdr.Size = $length( sdr.Body )
+		$$$THROWONERROR(sc,##class(Ens.Util.JSON).ObjectToJSONStream(sdr,.body))
+		set response = ..POST(endpoint _ "/submitDocument",
+							 .headers, .body)
+		if ( response.StatusCode '= 200 ) { //'
+			write "Error calling /submitDocument for " _ point,!
+			do response.OutputToDevice()
+			continue
+		}	
+		write "/submitDocument for " _ point _ " was SUCCESSFUL",!
+	}
+]]></Implementation>
+</Method>
+
+<Method name="POST">
+<Internal>1</Internal>
+<ClassMethod>1</ClassMethod>
+<FormalSpec><![CDATA[url,&headers,body=""]]></FormalSpec>
+<ReturnType>%Net.HttpResponse</ReturnType>
+<Implementation><![CDATA[
+	set req=##class(%Net.HttpRequest).%New()
+	do ##class(%Net.URLParser).Parse(url,.parsedUrl)
+	set req.Server = parsedUrl("host")
+	set req.Port = parsedUrl("port")
+	set headerKey = $order(headers(""))
+	while ( headerKey '= "" ) { //'
+		do req.SetHeader( headerKey, headers(headerKey) )
+		set headerKey = $order(headers(headerKey))
+	}
+	if ( $isobject(body)  && body.%Extends("%Stream.Object") ) {
+		do body.Rewind()
+		while ( 'body.AtEnd ) { //'
+			do req.EntityBody.Write( body.Read() ) 
+		}
+		do req.EntityBody.Rewind()
+		set req.ContentType = "application/json"
+	}
+	if ( ('$isobject(body)) && (body '= "") ) {   //'
+		do req.EntityBody.Write( body ) 
+		set req.ContentType = "application/json"
+	}
+	$$$THROWONERROR(sc,req.Post( parsedUrl("path") ))
+	return req.HttpResponse
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="HSPanasonic.UsageCharts">
+<Super>%CSP.Page</Super>
+<TimeChanged>63487,39646.63987</TimeChanged>
+<TimeCreated>63484,42682.465536</TimeCreated>
+
+<Method name="OnPage">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	set ns="scanpointtest1"
+	//set d=##class(HSPanasonic.AdminQueries).DocumentsSubmittedPerDay(ns)
+	set d=##class(HSPanasonic.AdminQueries).SubjectSearchesPerDay(ns)
+	&html<
+<!DOCTYPE html>
+<html>
+ <head>
+  <link rel="stylesheet" 
+		href="//cdnjs.cloudflare.com/ajax/libs/morris.js/0.5.1/morris.css">
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.0/jquery.min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/raphael/2.1.0/raphael-min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/morris.js/0.5.1/morris.min.js"></script>
+ </head>
+ <body>
+  <div id="myfirstchart" style="height: 250px;"></div>
+ </body>
+ <script type="text/javascript">
+	var raw_data = #(d)#; 
+	console.dir( raw_data );
+	var data = [];
+	raw_data.forEach( function(d) {
+		data.push( { "Date" : d.TimeProcessed.split(' ')[0],
+					 "Messages" : d.NumberOfMessages });
+	});
+	console.dir(data);
+new Morris.Line({
+  // ID of the element in which to draw the chart.
+  element: 'myfirstchart',
+  // Chart data records -- each entry in this array corresponds to a point on
+  // the chart.
+  /*
+  data: [
+    { year: '2008', value: 20 },
+    { year: '2009', value: 10 },
+    { year: '2010', value: 5 },
+    { year: '2011', value: 5 },
+    { year: '2012', value: 20 }
+  ],
+  */
+  data : data,
+  // The name of the data record attribute that contains x-values.
+  //xkey: 'year',
+  xkey: 'Date',
+  // A list of names of data record attributes that contain y-values.
+  //ykeys: ['value'],
+  ykeys: ['Messages'],
+  // Labels for the ykeys -- will be displayed when you hover over the
+  // chart.
+  labels: ['Value']
+});
+ </script>
+</html>
+	>
+	quit $$$OK
+]]></Implementation>
+</Method>
+</Class>
+</Export>
